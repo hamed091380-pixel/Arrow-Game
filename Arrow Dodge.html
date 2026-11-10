@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Arrow Dodge</title>
+<style>
+:root{--bg:#efe9dc;--fg:#23201b;--card:#fffaf0;--accent:#c0392b;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14161c;--fg:#ece8df;--card:#232736;--accent:#ff6b5a}}
+:root[data-theme="dark"]{--bg:#14161c;--fg:#ece8df;--card:#232736;--accent:#ff6b5a}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+body{display:flex;flex-direction:column;align-items:center;padding:12px;min-height:100vh}
+h1{font-size:1.2rem;margin:4px 0 8px}
+#wrap{position:relative;width:100%;max-width:900px}
+canvas{width:100%;height:auto;display:block;border-radius:12px;background:#222;touch-action:none}
+#help{max-width:900px;font-size:.9rem;opacity:.85;margin:8px 0;text-align:center;line-height:1.5}
+#pad{display:flex;gap:8px;width:100%;max-width:900px;margin-top:6px}
+#pad button{flex:1;padding:16px 4px;font-size:1rem;border:0;border-radius:12px;background:var(--card);color:var(--fg);box-shadow:0 1px 4px #0003;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+#pad button:active{background:var(--accent);color:#fff}
+#modal{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:#000a;border-radius:12px}
+#modal div{background:var(--card);color:var(--fg);padding:24px 28px;border-radius:14px;text-align:center;max-width:80%}
+#modal h2{margin:0 0 8px}
+#modal button{margin-top:12px;padding:10px 20px;border:0;border-radius:8px;background:var(--accent);color:#fff;font-size:1rem}
+</style>
+</head>
+<body>
+<h1>🏹 Arrow Dodge</h1>
+<div id="wrap">
+  <canvas id="c" width="800" height="400"></canvas>
+  <div id="modal"><div><h2>🎉 Game finished!</h2><p>You reached Level 999. You beat the archer!</p><button id="again">Play again</button></div></div>
+</div>
+<div id="pad">
+  <button id="bJ">⬆ Jump</button>
+  <button id="bC">⬇ Crouch</button>
+  <button id="bD">⚡ Dash</button>
+  <button id="bP">⏸ Pause</button>
+</div>
+<div id="help"><b>↑ / W / Space</b> jump (hold longer for a higher jump) · <b>↓ / S</b> crouch · <b>Shift / D</b> dash (brief invincibility) · <b>P</b> pause.<br>Dodge 15 arrows to level up. Every 50 dodges in a row gives an extra life.</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const W=800,H=400,GY=330,PX=130,MAXL=999,NEED=15;
+let level,dodged,lives,combo,arrows,mode,msg='',msgT=0,spawnT,pl,keys={},last=0,clock=0,runT=0,paused=false;
+const STARS=Array.from({length:45},(_,i)=>[i*173%800,(i*97%220)+6,i%3+1]);
+
+function cfg(l){return{
+  speed:Math.min(360+l*12,880),
+  gap:Math.max(.55,1.7-l*.02),
+  fast:Math.min(.5,l*.015)}}
+function night(){const p=clock%100;return p<30?0:p<40?(p-30)/10:p<80?1:p<90?1-(p-80)/10:0}
+
+function resetLevel(){dodged=0;arrows=[];spawnT=1;pl={h:0,vy:0,crouch:false,dash:0,dcd:0,holdT:0}}
+function start(l){level=l;lives=3;combo=0;clock=0;paused=false;setPauseLabel();
+  document.getElementById('modal').style.display='none';resetLevel();mode='banner';msg='Level '+level;msgT=1.2}
+
+function spawn(){
+  const c=cfg(level);
+  let a={x:W+30,type:'low',lo:10,hi:18,v:c.speed,done:false,hit:false};
+  if(Math.random()<.5){a.type='high';a.lo=44;a.hi=52}
+  if(Math.random()<c.fast)a.v*=1.3;
+  arrows.push(a);
+}
+
+function update(dt){
+  clock+=dt;
+  if(mode==='banner'){msgT-=dt;if(msgT<=0)mode='play';return}
+  if(mode!=='play')return;
+  runT+=dt;
+  const air=pl.h>0||pl.vy>0;
+  pl.crouch=!air&&!!keys.down;
+  if(air){
+    const rising=pl.vy>0&&keys.jump&&pl.holdT<.3;
+    if(rising)pl.holdT+=dt;
+    pl.vy-=(rising?1300:2400)*dt;pl.h+=pl.vy*dt;
+    if(pl.h<=0){pl.h=0;pl.vy=0}
+  }
+  if(pl.dash>0)pl.dash-=dt;
+  if(pl.dcd>0)pl.dcd-=dt;
+  spawnT-=dt;
+  if(spawnT<=0){spawn();spawnT=cfg(level).gap*(.8+Math.random()*.5)}
+  const ph=pl.crouch?30:64,off=pl.dash>0?Math.sin((1-pl.dash/.3)*Math.PI)*60:0,px=PX+off;
+  for(const a of arrows){
+    a.x-=a.v*dt;
+    if(!a.done&&!a.hit&&pl.dash<=0){
+      const w=60;
+      if(a.x<px+14&&a.x+w>px-14&&pl.h<a.hi&&pl.h+ph>a.lo){a.hit=true;lives--;combo=0;msg='Hit! '+Math.max(0,lives)+' left';msgT=.6}
+    }
+    if(!a.done&&a.x+60<PX-30){a.done=true;if(!a.hit){dodged++;combo++;if(combo%50===0){lives++;msg='🎉 Combo '+combo+'! +1 life';msgT=1.4}}}
+  }
+  arrows=arrows.filter(a=>a.x>-120);
+  if(lives<=0){lives=3;combo=0;mode='banner';msg='Failed — restarting level '+level;msgT=1.4;resetLevel();return}
+  if(dodged>=NEED){
+    if(level+1>=MAXL){level=MAXL;mode='done';document.getElementById('modal').style.display='flex';return}
+    level++;lives=Math.max(lives,3);resetLevel();mode='banner';msg='Level '+level+' — faster!';msgT=1.3;
+  }
+}
+
+function drawArrow(a){
+  const y=GY-(a.lo+a.hi)/2;
+  ctx.strokeStyle=a.hit?'#888':'#e6c291';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(a.x,y);ctx.lineTo(a.x+60,y);ctx.stroke();
+  ctx.fillStyle=a.hit?'#888':'#dfe5ea';
+  ctx.beginPath();ctx.moveTo(a.x-12,y);ctx.lineTo(a.x+4,y-7);ctx.lineTo(a.x+4,y+7);ctx.fill();
+  ctx.fillStyle='#e74c3c';ctx.fillRect(a.x+50,y-6,10,3);ctx.fillRect(a.x+50,y+3,10,3);
+}
+
+function drawHero(x,by,air,crouch,dashing){
+  ctx.lineCap='round';ctx.lineJoin='round';
+  const legL=crouch?13:26,torso=crouch?12:22,hipY=by-legL,shY=hipY-torso,sx=x+(dashing?9:crouch?6:0),ph=runT*14;
+  const foot=f=>{
+    if(air)return f?[x-10,by-8]:[x+10,by-14];
+    if(crouch)return f?[x-8,by]:[x+8,by];
+    return [x+Math.sin(ph+f)*15,by-Math.max(0,Math.cos(ph+f))*9]};
+  const leg=(f,col)=>{const [fx,fy]=foot(f),kx=(x+fx)/2+(crouch?10:5),ky=(hipY+fy)/2;
+    ctx.strokeStyle=col;ctx.lineWidth=6;ctx.beginPath();ctx.moveTo(x,hipY);ctx.lineTo(kx,ky);ctx.lineTo(fx,fy);ctx.stroke()};
+  const arm=(f,col)=>{let hx,hy;
+    if(air){hx=sx+(f?-14:14);hy=shY-(f?2:8)}
+    else if(dashing||crouch){hx=sx+(f?-16:10);hy=shY+8}
+    else{hx=sx+Math.sin(ph+f)*15;hy=shY+15-Math.abs(Math.cos(ph+f))*3}
+    const ex=(sx+hx)/2,ey=(shY+4+hy)/2+5;
+    ctx.strokeStyle=col;ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(sx,shY+4);ctx.lineTo(ex,ey);ctx.lineTo(hx,hy);ctx.stroke()};
+  ctx.globalAlpha=dashing?.55:1;
+  leg(Math.PI,'#1565c0');arm(0,'#1565c0');
+  ctx.strokeStyle='#4fc3f7';ctx.lineWidth=9;ctx.beginPath();ctx.moveTo(x,hipY);ctx.lineTo(sx,shY);ctx.stroke();
+  leg(0,'#4fc3f7');arm(Math.PI,'#4fc3f7');
+  ctx.fillStyle='#ffe0b2';ctx.beginPath();ctx.arc(sx,shY-9,9,0,7);ctx.fill();
+  ctx.fillStyle='#111';ctx.fillRect(sx+3,shY-11,3,3);
+  ctx.globalAlpha=1;
+}
+
+function draw(){
+  const n=night(),mix=(a,b)=>a.map((v,i)=>Math.round(v+(b[i]-v)*n)).join(',');
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'rgb('+mix([39,64,107],[5,7,20])+')');g.addColorStop(1,'rgb('+mix([233,165,107],[26,24,56])+')');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  if(n>0){
+    ctx.globalAlpha=n;ctx.fillStyle='#fff';STARS.forEach(s=>ctx.fillRect(s[0],s[1],s[2],s[2]));
+    ctx.fillStyle='#f5f3ce';ctx.beginPath();ctx.arc(660,70,22,0,7);ctx.fill();
+    ctx.globalAlpha=1;
+  }
+  ctx.fillStyle='rgb('+mix([59,47,42],[20,16,22])+')';ctx.fillRect(0,GY,W,H-GY);
+  ctx.fillStyle='rgb('+mix([90,125,58],[28,48,40])+')';ctx.fillRect(0,GY,W,6);
+  ctx.fillStyle='#ffffff1f';const so=(runT*220)%40;for(let x=-so;x<W;x+=40)ctx.fillRect(x,GY+16,18,3);
+  // archer
+  ctx.strokeStyle='#111';ctx.lineWidth=4;ctx.beginPath();ctx.arc(765,GY-50,34,Math.PI*.55,Math.PI*1.45);ctx.stroke();
+  ctx.fillStyle='#111';ctx.fillRect(775,GY-64,14,64);
+  // hero
+  const air=pl.h>0||pl.vy>0,off=pl.dash>0?Math.sin((1-pl.dash/.3)*Math.PI)*60:0;
+  drawHero(PX+off,GY-pl.h,air,pl.crouch,pl.dash>0);
+  arrows.forEach(drawArrow);
+  // HUD
+  ctx.fillStyle='#000a';ctx.fillRect(10,10,330,66);
+  ctx.fillStyle='#fff';ctx.font='bold 20px system-ui,sans-serif';ctx.fillText('Level '+level+' / '+MAXL,20,34);
+  ctx.font='15px system-ui,sans-serif';ctx.fillText('Dodged '+Math.min(dodged,NEED)+'/'+NEED+'  ·  Combo '+(combo%50)+'/50 → ❤',20,60);
+  ctx.font='20px system-ui,sans-serif';ctx.fillText(lives>5?'❤×'+lives:'❤'.repeat(Math.max(0,lives)),220,34);
+  ctx.fillStyle='#000a';ctx.fillRect(W-150,10,140,50);
+  ctx.fillStyle=pl.dcd>0?'#ffd966':'#9f9';ctx.font='14px system-ui,sans-serif';
+  ctx.fillText(pl.dcd>0?'Dash: recharging':'Dash: ready',W-140,30);
+  ctx.fillStyle='#fff';ctx.fillText(n>.5?'🌙 Night':'☀ Day',W-140,50);
+  if((mode==='banner'||msgT>0)&&msg){
+    ctx.fillStyle='#000a';ctx.fillRect(0,H/2-50,W,70);
+    ctx.fillStyle='#fff';ctx.font='bold 32px system-ui,sans-serif';ctx.textAlign='center';ctx.fillText(msg,W/2,H/2-5);ctx.textAlign='left';
+  }
+  if(paused){
+    ctx.fillStyle='#000b';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.textAlign='center';ctx.font='bold 44px system-ui,sans-serif';ctx.fillText('⏸ Paused',W/2,H/2);
+    ctx.font='18px system-ui,sans-serif';ctx.fillText('Press P or tap Resume to continue',W/2,H/2+34);ctx.textAlign='left';
+  }
+}
+
+function loop(ts){
+  const dt=Math.min(.033,(ts-last)/1000||0);last=ts;
+  if(!paused){if(mode==='play'&&msgT>0)msgT-=dt;update(dt)}
+  draw();requestAnimationFrame(loop);
+}
+
+function setPauseLabel(){document.getElementById('bP').textContent=paused?'▶ Resume':'⏸ Pause'}
+function setPause(p){if(mode==='done')return;paused=p;keys.down=false;keys.jump=false;setPauseLabel()}
+function jump(){if(mode==='play'&&!paused&&pl.h<=0&&pl.vy<=0&&!pl.crouch){pl.vy=620;pl.h=.1;pl.holdT=0}}
+function dash(){if(mode==='play'&&!paused&&pl.dcd<=0&&pl.dash<=0){pl.dash=.3;pl.dcd=1}}
+addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(['arrowup','arrowdown',' '].includes(k))e.preventDefault();
+  if(k==='p'||k==='escape'){if(!e.repeat)setPause(!paused);return}
+  if(k==='arrowup'||k==='w'||k===' '){keys.jump=true;if(!e.repeat)jump()}
+  if(k==='arrowdown'||k==='s')keys.down=true;
+  if((k==='shift'||k==='d')&&!e.repeat)dash();
+});
+addEventListener('keyup',e=>{const k=e.key.toLowerCase();
+  if(k==='arrowdown'||k==='s')keys.down=false;
+  if(k==='arrowup'||k==='w'||k===' ')keys.jump=false});
+function bind(id,down,up){const b=document.getElementById(id);
+  b.addEventListener('pointerdown',e=>{e.preventDefault();down()});
+  if(up)['pointerup','pointerleave','pointercancel'].forEach(ev=>b.addEventListener(ev,up))}
+bind('bJ',()=>{keys.jump=true;jump()},()=>keys.jump=false);
+bind('bD',dash);
+bind('bC',()=>keys.down=true,()=>keys.down=false);
+document.getElementById('bP').addEventListener('click',()=>setPause(!paused));
+document.addEventListener('visibilitychange',()=>{if(document.hidden)setPause(true)});
+document.getElementById('again').onclick=()=>start(1);
+start(1);requestAnimationFrame(loop);
+</script>
+</body>
+</html>
